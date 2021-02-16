@@ -37,15 +37,6 @@ int main(int argc, char *argv[])
   printf("Host %s, and port %d.\n", Desthost, port);
 #endif
 
-  /*
-  sockaddr_in hint;
-  memset(&hint, 0, sizeof hint);
-  hint.sin_family = AF_UNSPEC;
-  hint.sin_port = htons(port);
-  inet_pton(AF_UNSPEC, Desthost, &hint.sin_addr);
-  socklen_t addrlen = sizeof (hint);
-  */
-
   struct addrinfo hint, *servinfo, *p;
   int rv;
   int sock;
@@ -78,7 +69,6 @@ int main(int argc, char *argv[])
   }
 
   calcMessage *firstMessage = new calcMessage;
-  //*firstMessage = {22, 0, 17, 1, 0};
   firstMessage->type = htons(22);
   firstMessage->message = htonl(0);
   firstMessage->protocol = htons(17);
@@ -99,7 +89,7 @@ int main(int argc, char *argv[])
       }
       else
       {
-        printf("Send failed too many times. Closing...");
+        printf("Send failed too many times. Closing...\n");
         sleep(2);
         return 2;
       }
@@ -116,7 +106,7 @@ int main(int argc, char *argv[])
   int numberOfBytes = recvfrom(sock, protocol, sizeof(*protocol), 0, p->ai_addr, &p->ai_addrlen);
   if (numberOfBytes == -1)
   {
-    printf("Recieve failed!");
+    printf("Recieve failed!\n");
     return 3;
   }
   else if (numberOfBytes == sizeof(calcProtocol))
@@ -139,7 +129,7 @@ int main(int argc, char *argv[])
     message->minor_version = ntohs(message->minor_version);
     if ((message->type == 2) && (message->message == 2) && (message->major_version == 1) && (message->minor_version == 0))
     {
-      printf("NOT OK");
+      printf("NOT OK\n");
       return 4;
     }
   }
@@ -150,7 +140,7 @@ int main(int argc, char *argv[])
   }
   else if (protocol->arith == 2)
   {
-    protocol->inResult = abs(protocol->inValue1 - protocol->inValue2);
+    protocol->inResult = protocol->inValue1 - protocol->inValue2;
   }
   else if (protocol->arith == 3)
   {
@@ -166,7 +156,7 @@ int main(int argc, char *argv[])
   }
   else if (protocol->arith == 6)
   {
-    protocol->flResult = abs(protocol->flValue1 - protocol->flValue2);
+    protocol->flResult = protocol->flValue1 - protocol->flValue2;
   }
   else if (protocol->arith == 7)
   {
@@ -178,10 +168,19 @@ int main(int argc, char *argv[])
   }
   else
   {
-    printf("Something went wrong!");
+    printf("Something went wrong!\n");
     return 5;
   }
-
+/*
+  if(protocol->arith < 5)
+  {
+    printf("Arith: %d, intOne: %d, intTwo: %d, int Result: %d\n",protocol->arith, protocol->inValue1, protocol->inValue2, protocol->inResult);
+  }
+  else
+  {
+    printf("Arith: %d, floatOne: %8.8g, floatTwo: %8.8g, float Result: %8.8g\n",protocol->arith, protocol->flValue1, protocol->flValue2, protocol->flResult);
+  }
+*/
   protocol->type = htons(protocol->type);
   protocol->major_version = htons(protocol->major_version);
   protocol->minor_version = htons(protocol->minor_version);
@@ -204,7 +203,7 @@ int main(int argc, char *argv[])
       }
       else
       {
-        printf("Send failed too many times. Closing...");
+        printf("Send failed too many times. Closing...\n");
         sleep(2);
         return 6;
       }
@@ -218,7 +217,7 @@ int main(int argc, char *argv[])
   numberOfBytes = recvfrom(sock, message, sizeof(*message), 0, p->ai_addr, &p->ai_addrlen);
   if (numberOfBytes == -1)
   {
-    printf("Recieve Failed!");
+    printf("Recieve Failed!\n");
     return 7;
   }
   else if (numberOfBytes == sizeof(calcMessage))
@@ -228,9 +227,16 @@ int main(int argc, char *argv[])
     message->protocol = ntohs(message->protocol);
     message->major_version = ntohs(message->major_version);
     message->minor_version = ntohs(message->minor_version);
+    if ((message->type == 2) && (message->message == 2) && (message->major_version == 1) && (message->minor_version == 0))
+    {
+      printf("NOT OK\n");
+      return 8;
+    }
+    else
+    {
+      printf("OK\n");
+    }
   }
-
-  printf("Message: %d", message->message);
 
   close(sock);
   freeaddrinfo(servinfo);
