@@ -84,12 +84,30 @@ int main(int argc, char *argv[])
   firstMessage->protocol = htons(17);
   firstMessage->major_version = htons(1);
   firstMessage->minor_version = htons(0);
+  int send;
 
-  int send = sendto(sock, firstMessage, sizeof(*firstMessage), 0, p->ai_addr, p->ai_addrlen);
-  if (send == -1)
+  for (int i = 0; i < 3; i++)
   {
-    printf("Send failed!");
-    return 2;
+    send = sendto(sock, firstMessage, sizeof(*firstMessage), 0, p->ai_addr, p->ai_addrlen);
+    if (send == -1)
+    {
+      if(i < 2)
+      {
+        printf("Send failed, trying again in 2 seconds\n");
+        sleep(2);
+        printf("Trying again...\n");
+      }
+      else
+      {
+        printf("Send failed too many times. Closing...");
+        sleep(2);
+        return 2;
+      }
+    }
+    else
+    {
+      break;
+    }
   }
 
   calcProtocol *protocol = new calcProtocol;
@@ -173,11 +191,28 @@ int main(int argc, char *argv[])
   protocol->inValue2 = htonl(protocol->inValue2);
   protocol->inResult = htonl(protocol->inResult);
 
-  send = sendto(sock, protocol, sizeof(*protocol), 0, p->ai_addr, p->ai_addrlen);
-  if (send == -1)
+  for(int i = 0; i < 3; i++)
   {
-    printf("Send failed!");
-    return 6;
+    send = sendto(sock, protocol, sizeof(*protocol), 0, p->ai_addr, p->ai_addrlen);
+    if (send == -1)
+    {
+      if(i < 2)
+      {
+        printf("Send failed. Trying again in 2 seconds\n");
+        sleep(2);
+        printf("Trying again...\n");
+      }
+      else
+      {
+        printf("Send failed too many times. Closing...");
+        sleep(2);
+        return 6;
+      }
+    }
+    else
+    {
+      break;
+    }
   }
 
   numberOfBytes = recvfrom(sock, message, sizeof(*message), 0, p->ai_addr, &p->ai_addrlen);
