@@ -41,6 +41,11 @@ int main(int argc, char *argv[])
   char delim[] = ":";
   char *Desthost = strtok(argv[1], delim);
   char *Destport = strtok(NULL, delim);
+  if (Desthost == NULL || Destport == NULL)
+  {
+    printf("Usage: %s <ip>:<port> \n", argv[0]);
+    exit(1);
+  }
   // *Desthost now points to a sting holding whatever came before the delimiter, ':'.
   // *Dstport points to whatever string came after the delimiter.
 
