@@ -8,10 +8,23 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <netdb.h>
+#include <errno.h>
 // Included to get the support library
 #include <calcLib.h>
 
 #include "protocol.h"
+
+void closeAll(int& sock, addrinfo* servinfo, calcMessage* firstMessage = nullptr, calcProtocol* protocol = nullptr, calcMessage* message = nullptr)
+{
+  close(sock);
+  freeaddrinfo(servinfo);
+  if(firstMessage != nullptr && protocol != nullptr && message != nullptr) 
+  {
+    delete firstMessage;
+    delete protocol;
+    delete message;
+  }
+}
 
 #define DEBUG
 int main(int argc, char *argv[])
@@ -68,6 +81,18 @@ int main(int argc, char *argv[])
     exit(1);
   }
 
+  struct timeval time;
+  time.tv_sec = 2;
+  time.tv_usec = 0;
+  int socketTimeOut;
+  socketTimeOut = setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &time, sizeof time);
+  if (socketTimeOut == -1)
+  {
+    printf("Socket option failed! %s\n", strerror(errno));
+    closeAll(sock, servinfo);
+    return 1;
+  }
+
   calcMessage *firstMessage = new calcMessage;
   firstMessage->type = htons(22);
   firstMessage->message = htonl(0);
@@ -75,62 +100,62 @@ int main(int argc, char *argv[])
   firstMessage->major_version = htons(1);
   firstMessage->minor_version = htons(0);
   int send;
+  calcProtocol *protocol = new calcProtocol;
+  calcMessage *message = new calcMessage;
+  int numberOfBytes;
 
   for (int i = 0; i < 3; i++)
   {
     send = sendto(sock, firstMessage, sizeof(*firstMessage), 0, p->ai_addr, p->ai_addrlen);
     if (send == -1)
     {
-      if(i < 2)
+      printf("Send failed!\n");
+      closeAll(sock, servinfo, firstMessage, protocol, message);
+      return 2;
+    }
+    numberOfBytes = recvfrom(sock, protocol, sizeof(*protocol), 0, p->ai_addr, &p->ai_addrlen);
+    if (numberOfBytes == -1)
+    {
+      if (i < 2)
       {
-        printf("Send failed, trying again in 2 seconds\n");
-        sleep(2);
-        printf("Trying again...\n");
+        printf("Timed out, resending message...\n");
       }
       else
       {
-        printf("Send failed too many times. Closing...\n");
-        sleep(2);
-        return 2;
+        printf("Recieve failed!\n");
+        closeAll(sock, servinfo, firstMessage, protocol, message);
+        return 3;
       }
     }
-    else
+    else if (numberOfBytes == sizeof(calcProtocol))
     {
+      protocol->type = ntohs(protocol->type);
+      protocol->major_version = ntohs(protocol->major_version);
+      protocol->minor_version = ntohs(protocol->minor_version);
+      protocol->id = ntohl(protocol->id);
+      protocol->arith = ntohl(protocol->arith);
+      protocol->inValue1 = ntohl(protocol->inValue1);
+      protocol->inValue2 = ntohl(protocol->inValue2);
+      protocol->inResult = ntohl(protocol->inResult);
       break;
     }
-  }
-
-  calcProtocol *protocol = new calcProtocol;
-  calcMessage *message = new calcMessage;
-
-  int numberOfBytes = recvfrom(sock, protocol, sizeof(*protocol), 0, p->ai_addr, &p->ai_addrlen);
-  if (numberOfBytes == -1)
-  {
-    printf("Recieve failed!\n");
-    return 3;
-  }
-  else if (numberOfBytes == sizeof(calcProtocol))
-  {
-    protocol->type = ntohs(protocol->type);
-    protocol->major_version = ntohs(protocol->major_version);
-    protocol->minor_version = ntohs(protocol->minor_version);
-    protocol->id = ntohl(protocol->id);
-    protocol->arith = ntohl(protocol->arith);
-    protocol->inValue1 = ntohl(protocol->inValue1);
-    protocol->inValue2 = ntohl(protocol->inValue2);
-    protocol->inResult = ntohl(protocol->inResult);
-  }
-  else if (numberOfBytes == sizeof(calcMessage))
-  {
-    message = (calcMessage *)protocol;
-    message->type = ntohs(message->type);
-    message->message = ntohs(message->message);
-    message->major_version = ntohs(message->major_version);
-    message->minor_version = ntohs(message->minor_version);
-    if ((message->type == 2) && (message->message == 2) && (message->major_version == 1) && (message->minor_version == 0))
+    else if (numberOfBytes == sizeof(calcMessage))
     {
-      printf("NOT OK\n");
-      return 4;
+      message = (calcMessage *)protocol;
+      message->type = ntohs(message->type);
+      message->message = ntohs(message->message);
+      message->major_version = ntohs(message->major_version);
+      message->minor_version = ntohs(message->minor_version);
+      if ((message->type == 2) && (message->message == 2) && (message->major_version == 1) && (message->minor_version == 0))
+      {
+        printf("NOT OK\n");
+        closeAll(sock, servinfo, firstMessage, protocol, message);
+        return 4;
+      }
+      else
+      {
+        break;
+      }
     }
   }
 
@@ -169,18 +194,19 @@ int main(int argc, char *argv[])
   else
   {
     printf("Something went wrong!\n");
+    closeAll(sock, servinfo, firstMessage, protocol, message);
     return 5;
   }
-/*
-  if(protocol->arith < 5)
+
+  if (protocol->arith < 5)
   {
-    printf("Arith: %d, intOne: %d, intTwo: %d, int Result: %d\n",protocol->arith, protocol->inValue1, protocol->inValue2, protocol->inResult);
+    printf("Arith: %d, intOne: %d, intTwo: %d, int Result: %d\n", protocol->arith, protocol->inValue1, protocol->inValue2, protocol->inResult);
   }
   else
   {
-    printf("Arith: %d, floatOne: %8.8g, floatTwo: %8.8g, float Result: %8.8g\n",protocol->arith, protocol->flValue1, protocol->flValue2, protocol->flResult);
+    printf("Arith: %d, floatOne: %8.8g, floatTwo: %8.8g, float Result: %8.8g\n", protocol->arith, protocol->flValue1, protocol->flValue2, protocol->flResult);
   }
-*/
+
   protocol->type = htons(protocol->type);
   protocol->major_version = htons(protocol->major_version);
   protocol->minor_version = htons(protocol->minor_version);
@@ -190,58 +216,50 @@ int main(int argc, char *argv[])
   protocol->inValue2 = htonl(protocol->inValue2);
   protocol->inResult = htonl(protocol->inResult);
 
-  for(int i = 0; i < 3; i++)
+  for (int i = 0; i < 3; i++)
   {
     send = sendto(sock, protocol, sizeof(*protocol), 0, p->ai_addr, p->ai_addrlen);
     if (send == -1)
     {
+      printf("Send failed. Trying again in 2 seconds\n");
+      closeAll(sock, servinfo, firstMessage, protocol, message);
+      return 6;
+    }
+    numberOfBytes = recvfrom(sock, message, sizeof(*message), 0, p->ai_addr, &p->ai_addrlen);
+    if (numberOfBytes == -1)
+    {
       if(i < 2)
       {
-        printf("Send failed. Trying again in 2 seconds\n");
-        sleep(2);
-        printf("Trying again...\n");
+        printf("Timed out, resending message...\n");
       }
       else
       {
-        printf("Send failed too many times. Closing...\n");
-        sleep(2);
-        return 6;
+        printf("Recieve Failed!\n");
+        closeAll(sock, servinfo, firstMessage, protocol, message);
+        return 7;
       }
     }
-    else
+    else if (numberOfBytes == sizeof(calcMessage))
     {
-      break;
+      message->type = ntohs(message->type);
+      message->message = ntohl(message->message);
+      message->protocol = ntohs(message->protocol);
+      message->major_version = ntohs(message->major_version);
+      message->minor_version = ntohs(message->minor_version);
+      if ((message->type == 2) && (message->message == 2) && (message->major_version == 1) && (message->minor_version == 0))
+      {
+        printf("NOT OK\n");
+        closeAll(sock, servinfo, firstMessage, protocol, message);
+        return 8;
+      }
+      else
+      {
+        printf("OK\n");
+        break;
+      }
     }
   }
 
-  numberOfBytes = recvfrom(sock, message, sizeof(*message), 0, p->ai_addr, &p->ai_addrlen);
-  if (numberOfBytes == -1)
-  {
-    printf("Recieve Failed!\n");
-    return 7;
-  }
-  else if (numberOfBytes == sizeof(calcMessage))
-  {
-    message->type = ntohs(message->type);
-    message->message = ntohl(message->message);
-    message->protocol = ntohs(message->protocol);
-    message->major_version = ntohs(message->major_version);
-    message->minor_version = ntohs(message->minor_version);
-    if ((message->type == 2) && (message->message == 2) && (message->major_version == 1) && (message->minor_version == 0))
-    {
-      printf("NOT OK\n");
-      return 8;
-    }
-    else
-    {
-      printf("OK\n");
-    }
-  }
-
-  close(sock);
-  freeaddrinfo(servinfo);
-  delete firstMessage;
-  delete protocol;
-  delete message;
+  closeAll(sock, servinfo, firstMessage, protocol, message);
   return 0;
 }
