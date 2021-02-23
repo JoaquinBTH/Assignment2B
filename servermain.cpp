@@ -12,6 +12,7 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <errno.h>
+#include <ctime>
 
 // Included to get the support library
 #include <calcLib.h>
@@ -39,12 +40,61 @@ void checkJobbList(int signum){
   return;
 }
 
+void randomCalculation(calcProtocol& protocol)
+{
+  protocol.arith = rand() % 8 + 1;
+  protocol.inValue1 = rand() % 100 + 1;
+  protocol.inValue2 = rand() % 100 + 1;
 
+  protocol.flValue1 = (double)rand() / (RAND_MAX/100);
+  protocol.flValue2 = (double)rand() / (RAND_MAX/100);
+  if(protocol.arith == 1)
+  {
+    //Add
+    protocol.inResult = protocol.inValue1 + protocol.inValue2;
+  }
+  else if(protocol.arith == 2)
+  {
+    //Subtraction
+    protocol.inResult = protocol.inValue1 - protocol.inValue2;
+  }
+  else if(protocol.arith == 3)
+  {
+    //Multiplication
+    protocol.inResult = protocol.inValue1 * protocol.inValue2;
+  }
+  else if(protocol.arith== 4)
+  {
+    //Division
+    protocol.inResult = protocol.inValue1 / protocol.inValue2;
+  }
+  else if(protocol.arith == 5)
+  {
+    //fAdd
+    protocol.flResult = protocol.flValue1 + protocol.flValue2;
+  }
+  else if(protocol.arith == 6)
+  {
+    //fSubtraction
+    protocol.flResult = protocol.flValue1 - protocol.flValue2;
+  }
+  else if(protocol.arith == 7)
+  {
+    //fMultiplication
+    protocol.flResult = protocol.flValue1 * protocol.flValue2;
+  }
+  else if(protocol.arith == 8)
+  {
+    //fDivision
+    protocol.flResult = protocol.flValue1 / protocol.flValue2;
+  }
+}
 
 
 #define DEBUG
 int main(int argc, char *argv[]){
   
+  srand(unsigned(time(NULL)));
   /* Do more magic */
   if (argc != 2)
   {
@@ -93,14 +143,152 @@ int main(int argc, char *argv[]){
       continue;
     }
     printf("Socket Created.\n");
+    rv = bind(serverSock, p->ai_addr, p->ai_addrlen);
+    if(rv == -1)
+    {
+      perror("Bind failed!\n");
+      close(serverSock);
+      continue;
+    }
     break;
   }
+
+  freeaddrinfo(servinfo);
 
   if (p == NULL)
   {
     fprintf(stderr, "Client failed to create an apporpriate socket.\n");
-    freeaddrinfo(servinfo);
     exit(1);
+  }
+
+  calcMessage* message = new calcMessage;
+  calcProtocol* protocol = new calcProtocol;
+  calcProtocol* calculations = new calcProtocol;
+  int send;
+  int numberOfBytes;
+  int choice = 0;
+  int lastMessage = 0;
+
+  /*
+  Ta emot meddelande i form av calcMessage som är 22, 0, 17, 1, 0
+  Om detta är rätt, skicka iväg ett calcProtocol med calculationer
+  Annars skicka iväg ett calcMessage som är 2, 2, x, 1, 0
+
+  Tar emot ett svar i form av calcProtocol.
+  Om detta är rätt, skicka iväg ett calcMessage med 1 som message.
+  Annars skicka iväg ett calcMessage som är 2, 2, x, 1, 0
+  */
+  while(lastMessage == 0)
+  {
+    numberOfBytes = recvfrom(serverSock, protocol, sizeof(*protocol), 0, p->ai_addr, &p->ai_addrlen);
+    if(numberOfBytes == -1)
+    {
+      printf("Recieve failed!\n");
+      break;
+    }
+    else if (numberOfBytes == sizeof(calcProtocol))
+    {
+      protocol->type = ntohs(protocol->type);
+      protocol->major_version = ntohs(protocol->major_version);
+      protocol->minor_version = ntohs(protocol->minor_version);
+      protocol->id = ntohl(protocol->id);
+      protocol->arith = ntohl(protocol->arith);
+      protocol->inValue1 = ntohl(protocol->inValue1);
+      protocol->inValue2 = ntohl(protocol->inValue2);
+      protocol->inResult = ntohl(protocol->inResult);
+
+      if(protocol->inResult == calculations->inResult && protocol->flResult == calculations->flResult)
+      {
+        choice = 3;
+      }
+      else
+      {
+        choice = 2;
+      }
+
+    }
+    else if (numberOfBytes == sizeof(calcMessage))
+    {
+      message = (calcMessage *)protocol;
+      message->type = ntohs(message->type);
+      message->message = ntohl(message->message);
+      message->protocol = ntohs(message->protocol);
+      message->major_version = ntohs(message->major_version);
+      message->minor_version = ntohs(message->minor_version);
+      if ((message->type == 22) && (message->message == 0) && (message->protocol == 17) && (message->major_version == 1) && (message->minor_version == 0))
+      {
+        choice = 1;
+      }
+      else
+      {
+        choice = 2;
+      }
+    }
+
+    //Got correct calcMessage. Send calculations.
+    if(choice == 1)
+    {
+      randomCalculation(*calculations);
+
+      protocol->type = htons(calculations->type);
+      protocol->major_version = htons(calculations->major_version);
+      protocol->minor_version = htons(calculations->minor_version);
+      protocol->id = htonl(calculations->id);
+      protocol->arith = htonl(calculations->arith);
+      protocol->inValue1 = htonl(calculations->inValue1);
+      protocol->inValue2 = htonl(calculations->inValue2);
+      protocol->inResult = htonl(calculations->inResult);
+      protocol->flValue1 = calculations->flValue1;
+      protocol->flValue2 = calculations->flValue2;
+      protocol->flResult = calculations->flResult;
+
+      if (calculations->arith < 5)
+      {
+        printf("Arith: %d, intOne: %d, intTwo: %d, int Result: %d\n", calculations->arith, calculations->inValue1, calculations->inValue2, calculations->inResult);
+      }
+      else
+      {
+        printf("Arith: %d, floatOne: %8.8g, floatTwo: %8.8g, float Result: %8.8g\n", calculations->arith, calculations->flValue1, calculations->flValue2, calculations->flResult);
+      }
+
+      send = sendto(serverSock, protocol, sizeof(*protocol), 0, p->ai_addr, p->ai_addrlen);
+    }
+    //Got wrong protocol or answer. Send 2, 2, x, 1, 0.
+    else if(choice == 2)
+    {
+      message->type = htons(2);
+      message->message = htonl(2);
+      message->major_version = htons(1);
+      message->minor_version = htons(0);
+
+      send = sendto(serverSock, message, sizeof(*message), 0, p->ai_addr, p->ai_addrlen);
+
+      lastMessage = 1;
+    }
+    //Got correct protocol and right answer. Send 2, 1, x, 1, 0
+    else if(choice == 3)
+    {
+      message->type = htons(2);
+      message->message = htonl(1);
+      message->major_version = htons(1);
+      message->minor_version = htons(0);
+
+      send = sendto(serverSock, message, sizeof(*message), 0, p->ai_addr, p->ai_addrlen);
+
+      lastMessage = 1;
+    }
+    //Error
+    else
+    {
+      printf("Error when choosing what to send");
+      break;
+    }
+
+    if(send == -1)
+    {
+      printf("Send failed!\n");
+      break;
+    }
   }
 
   /* 
