@@ -15,8 +15,6 @@
 #include <ctime>
 #include <vector>
 
-#include <iostream>
-
 // Included to get the support library
 #include <calcLib.h>
 
@@ -32,7 +30,7 @@ struct clientDetails
   char address[256];
   int port;
   struct timeval time;
-  int id;
+  calcProtocol protocol;
 };
 vector<clientDetails> clientVector;
 
@@ -49,6 +47,7 @@ void checkJobbList(int signum)
     gettimeofday(&compare, NULL);
     if ((compare.tv_sec - clientVector.at(i).time.tv_sec) >= 10)
     {
+      printf("Deleting client with ID: %d\n", clientVector.at(i).protocol.id);
       clientVector.erase(clientVector.begin() + i);
       i--;
     }
@@ -206,17 +205,9 @@ int main(int argc, char *argv[])
   signal(SIGALRM, checkJobbList);
   setitimer(ITIMER_REAL, &alarmTime, NULL); // Start/register the alarm.
 
-  /*
-  Ta emot meddelande i form av calcMessage som är 22, 0, 17, 1, 0
-  Om detta är rätt, skicka iväg ett calcProtocol med calculationer
-  Annars skicka iväg ett calcMessage som är 2, 2, x, 1, 0
-
-  Tar emot ett svar i form av calcProtocol.
-  Om detta är rätt, skicka iväg ett calcMessage med 1 som message.
-  Annars skicka iväg ett calcMessage som är 2, 2, x, 1, 0
-  */
   while (terminateLoop == 0)
   {
+    printf("terminateLoop %d\n", terminateLoop);
     sockaddr_in tempAddr;
     socklen_t tempSize = sizeof(tempAddr);
     int choice = 0;
@@ -224,7 +215,6 @@ int main(int argc, char *argv[])
     printf("This is the main loop, %d time.\n", loopCount);
 
     numberOfBytes = recvfrom(serverSock, protocol, sizeof(*protocol), 0, (sockaddr *)&tempAddr, &tempSize);
-    //Om jag får recv från samma klient så ska jag uppdatera vectorClient.time till gettimeofday(&vectorClient.time, NULL);
     inet_ntop(AF_INET, &tempAddr.sin_addr, temp, 256);
     int found = 0;
     for (int i = 0; i < (int)clientVector.size(); i++)
@@ -232,9 +222,14 @@ int main(int argc, char *argv[])
       if (strcmp(clientVector.at(i).address, temp) == 0)
       {
         found++;
-        if(clientVector.at(i).port == ntohs(tempAddr.sin_port) && clientVector.at(i).id == (int)ntohl(protocol->id))
+        if(clientVector.at(i).port == ntohs(tempAddr.sin_port) && (int)ntohl(clientVector.at(i).protocol.id) == (int)ntohl(protocol->id))
         {
           gettimeofday(&clientVector.at(i).time, NULL);
+        }
+        else if (clientVector.at(i).port == ntohs(tempAddr.sin_port) && ntohl(clientVector.at(i).protocol.id) != ntohl(protocol->id))
+        {
+          choice = 2;
+          printf("Error, correct address and port, but the ID was changed.\n");
         }
       }
     }
@@ -242,9 +237,23 @@ int main(int argc, char *argv[])
     {
       strcpy(currentClient.address, temp);
       currentClient.port = ntohs(tempAddr.sin_port);
-      currentClient.id = id++;
+      currentClient.protocol.id = id++;
       gettimeofday(&currentClient.time, NULL);
       clientVector.push_back(currentClient);
+
+      randomCalculation(*calculations);
+      clientVector.at((int)(clientVector.size() - 1)).protocol.type = htons(calculations->type);
+      clientVector.at((int)(clientVector.size() - 1)).protocol.major_version = htons(calculations->major_version);
+      clientVector.at((int)(clientVector.size() - 1)).protocol.minor_version = htons(calculations->minor_version);
+      clientVector.at((int)(clientVector.size() - 1)).protocol.id = htonl(currentClient.protocol.id);
+      clientVector.at((int)(clientVector.size() - 1)).protocol.arith = htonl(calculations->arith);
+      clientVector.at((int)(clientVector.size() - 1)).protocol.inValue1 = htonl(calculations->inValue1);
+      clientVector.at((int)(clientVector.size() - 1)).protocol.inValue2 = htonl(calculations->inValue2);
+      clientVector.at((int)(clientVector.size() - 1)).protocol.inResult = htonl(calculations->inResult);
+      clientVector.at((int)(clientVector.size() - 1)).protocol.flValue1 = calculations->flValue1;
+      clientVector.at((int)(clientVector.size() - 1)).protocol.flValue2 = calculations->flValue2;
+      clientVector.at((int)(clientVector.size() - 1)).protocol.flResult = calculations->flResult;
+
     }
     else if(found == 0 && (int)ntohl(protocol->id) < id)
     {
@@ -298,19 +307,14 @@ int main(int argc, char *argv[])
     //Got correct calcMessage. Send calculations.
     if (choice == 1)
     {
-      randomCalculation(*calculations);
-
-      protocol->type = htons(calculations->type);
-      protocol->major_version = htons(calculations->major_version);
-      protocol->minor_version = htons(calculations->minor_version);
-      protocol->id = htonl(id - 1);
-      protocol->arith = htonl(calculations->arith);
-      protocol->inValue1 = htonl(calculations->inValue1);
-      protocol->inValue2 = htonl(calculations->inValue2);
-      protocol->inResult = htonl(calculations->inResult);
-      protocol->flValue1 = calculations->flValue1;
-      protocol->flValue2 = calculations->flValue2;
-      protocol->flResult = calculations->flResult;
+      int iValue;
+      for(int i = 0; i < (int)clientVector.size(); i++)
+      {
+        if (strcmp(clientVector.at(i).address, temp) == 0 && clientVector.at(i).port == ntohs(tempAddr.sin_port) && ntohl(clientVector.at(i).protocol.id) == ntohl(currentClient.protocol.id))
+        {
+          iValue = i;
+        }
+      }
 
       if (calculations->arith < 5)
       {
@@ -321,7 +325,7 @@ int main(int argc, char *argv[])
         printf("Arith: %d, floatOne: %8.8g, floatTwo: %8.8g, float Result: %8.8g\n", calculations->arith, calculations->flValue1, calculations->flValue2, calculations->flResult);
       }
 
-      send = sendto(serverSock, protocol, sizeof(*protocol), 0, (sockaddr *)&tempAddr, tempSize);
+      send = sendto(serverSock, &clientVector.at(iValue).protocol,  sizeof(clientVector.at(iValue).protocol), 0, (sockaddr *)&tempAddr, tempSize);
     }
     //Got wrong protocol or answer. Send 2, 2, x, 1, 0.
     else if (choice == 2)
@@ -332,6 +336,16 @@ int main(int argc, char *argv[])
       message->minor_version = htons(0);
 
       send = sendto(serverSock, message, sizeof(*message), 0, (sockaddr *)&tempAddr, tempSize);
+      printf("Sending NOT OK to client.\n");
+      for (int i = 0; i < (int)clientVector.size(); i++)
+      {
+        if (strcmp(clientVector.at(i).address, temp) == 0 && clientVector.at(i).port == ntohs(tempAddr.sin_port) && ntohl(clientVector.at(i).protocol.id) == currentClient.protocol.id)
+        {
+          printf("Deleting client with ID: %d\n", currentClient.protocol.id);
+          clientVector.erase(clientVector.begin() + i);
+          i--;
+        }
+      }
     }
     //Got correct protocol and right answer. Send 2, 1, x, 1, 0
     else if (choice == 3)
@@ -342,11 +356,21 @@ int main(int argc, char *argv[])
       message->minor_version = htons(0);
 
       send = sendto(serverSock, message, sizeof(*message), 0, (sockaddr *)&tempAddr, tempSize);
+      printf("Sending OK to client.\n");
+      for (int i = 0; i < (int)clientVector.size(); i++)
+      {
+        if (strcmp(clientVector.at(i).address, temp) == 0 && clientVector.at(i).port == ntohs(tempAddr.sin_port) && ntohl(clientVector.at(i).protocol.id) == currentClient.protocol.id)
+        {
+          printf("Deleting client with ID: %d\n", currentClient.protocol.id);
+          clientVector.erase(clientVector.begin() + i);
+          i--;
+        }
+      }
     }
     //Error
     else
     {
-      printf("Error when choosing what to send");
+      printf("Error when choosing what to send.\n");
       break;
     }
 
