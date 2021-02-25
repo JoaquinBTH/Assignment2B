@@ -38,8 +38,7 @@ vector<clientDetails> clientVector;
 void checkJobbList(int signum)
 {
   // As anybody can call the handler, its good coding to check the signal number that called it.
-
-  printf("Let me be, I want to sleep.\n");
+  printf("Checking inactive clients:\n");
   for (int i = 0; i < (int)clientVector.size(); i++)
   {
     //Tiden nu - tiden där klienten skickade >= 10. Då har det gått 10 sekunder.
@@ -51,12 +50,6 @@ void checkJobbList(int signum)
       clientVector.erase(clientVector.begin() + i);
       i--;
     }
-  }
-
-  if (loopCount > 20)
-  {
-    printf("I had enough.\n");
-    terminateLoop = 1;
   }
 
   return;
@@ -113,6 +106,9 @@ void randomCalculation(calcProtocol &protocol)
 }
 
 #define DEBUG
+#define SEND_CALC 1
+#define SEND_NOT_OK 2
+#define SEND_OK 3
 int main(int argc, char *argv[])
 {
 
@@ -205,14 +201,11 @@ int main(int argc, char *argv[])
   signal(SIGALRM, checkJobbList);
   setitimer(ITIMER_REAL, &alarmTime, NULL); // Start/register the alarm.
 
-  while (terminateLoop == 0)
+  while (1)
   {
-    printf("terminateLoop %d\n", terminateLoop);
     sockaddr_in tempAddr;
     socklen_t tempSize = sizeof(tempAddr);
     int choice = 0;
-
-    printf("This is the main loop, %d time.\n", loopCount);
 
     numberOfBytes = recvfrom(serverSock, protocol, sizeof(*protocol), 0, (sockaddr *)&tempAddr, &tempSize);
     inet_ntop(AF_INET, &tempAddr.sin_addr, temp, 256);
@@ -228,7 +221,7 @@ int main(int argc, char *argv[])
         }
         else if (clientVector.at(i).port == ntohs(tempAddr.sin_port) && ntohl(clientVector.at(i).protocol.id) != ntohl(protocol->id))
         {
-          choice = 2;
+          choice = SEND_NOT_OK;
           printf("Error, correct address and port, but the ID was changed.\n");
         }
       }
@@ -253,18 +246,17 @@ int main(int argc, char *argv[])
       clientVector.at((int)(clientVector.size() - 1)).protocol.flValue1 = calculations->flValue1;
       clientVector.at((int)(clientVector.size() - 1)).protocol.flValue2 = calculations->flValue2;
       clientVector.at((int)(clientVector.size() - 1)).protocol.flResult = calculations->flResult;
-
     }
     else if(found == 0 && (int)ntohl(protocol->id) < id)
     {
-      choice = 2;
+      choice = SEND_NOT_OK;
       printf("Error, lost client tried sending a message.\n");
     }
 
     if (numberOfBytes == -1)
     {
       printf("Recieve failed!\n");
-      break;
+      continue;
     }
     else if (numberOfBytes == sizeof(calcProtocol) && choice == 0)
     {
@@ -279,11 +271,11 @@ int main(int argc, char *argv[])
 
       if (protocol->inResult == calculations->inResult && protocol->flResult == calculations->flResult)
       {
-        choice = 3;
+        choice = SEND_OK;
       }
       else
       {
-        choice = 2;
+        choice = SEND_NOT_OK;
       }
     }
     else if (numberOfBytes == sizeof(calcMessage) && choice == 0)
@@ -296,16 +288,16 @@ int main(int argc, char *argv[])
       message->minor_version = ntohs(message->minor_version);
       if ((message->type == 22) && (message->message == 0) && (message->protocol == 17) && (message->major_version == 1) && (message->minor_version == 0))
       {
-        choice = 1;
+        choice = SEND_CALC;
       }
       else
       {
-        choice = 2;
+        choice = SEND_NOT_OK;
       }
     }
 
     //Got correct calcMessage. Send calculations.
-    if (choice == 1)
+    if (choice == SEND_CALC)
     {
       int iValue;
       for(int i = 0; i < (int)clientVector.size(); i++)
@@ -328,7 +320,7 @@ int main(int argc, char *argv[])
       send = sendto(serverSock, &clientVector.at(iValue).protocol,  sizeof(clientVector.at(iValue).protocol), 0, (sockaddr *)&tempAddr, tempSize);
     }
     //Got wrong protocol or answer. Send 2, 2, x, 1, 0.
-    else if (choice == 2)
+    else if (choice == SEND_NOT_OK)
     {
       message->type = htons(2);
       message->message = htonl(2);
@@ -348,7 +340,7 @@ int main(int argc, char *argv[])
       }
     }
     //Got correct protocol and right answer. Send 2, 1, x, 1, 0
-    else if (choice == 3)
+    else if (choice == SEND_OK)
     {
       message->type = htons(2);
       message->message = htonl(1);
@@ -371,19 +363,20 @@ int main(int argc, char *argv[])
     else
     {
       printf("Error when choosing what to send.\n");
-      break;
+      continue;
     }
 
     if (send == -1)
     {
       printf("Send failed!\n");
-      break;
+      continue;
     }
-
-    sleep(1);
-    loopCount++;
   }
 
   printf("done.\n");
+  delete message;
+  delete protocol;
+  delete calculations;
+  close(serverSock);
   return (0);
 }
